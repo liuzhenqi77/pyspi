@@ -6,7 +6,11 @@ import copy
 import os
 import logging
 
-from pyspi.base import Undirected, Directed, Unsigned, parse_univariate, parse_bivariate
+from pyspi.base import Undirected, Directed, Unsigned, parse_univariate, parse_bivariate, parse_multivariate
+
+from itertools import combinations, permutations
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 """
 Contains relevant dependence statistics from the information theory community.
@@ -206,25 +210,15 @@ class JIDTBase(Unsigned):
 
     def _set_theiler_window(self, data, i, j):
         if self._dyn_corr_excl == "AUTO":
-            if not hasattr(data, "theiler"):
-                z = data.to_numpy()
-                theiler_window = -np.ones((data.n_processes, data.n_processes))
-
-                # Compute effective sample size for each pair
-                for _i in range(data.n_processes):
-                    targ = z[_i]
-                    for _j in range(_i + 1, data.n_processes):
-                        src = z[_j]
-
-                        # Initialize the Theiler window using Bartlett's formula
-                        theiler_window[_i, _j] = 2 * np.dot(
-                            utils.acf(src), utils.acf(targ)
-                        )
-                        theiler_window[_j, _i] = theiler_window[_i, _j]
-                data.theiler = theiler_window
+            if data._theiler is None:
+                if data._acf_mat is None:
+                    data._calc_acf()
+                theiler_window = 2 * data._acf_mat @ data._acf_mat.T
+                np.fill_diagonal(theiler_window, -1)
+                data._theiler = theiler_window
 
             self._calc.setProperty(
-                self._DYN_CORR_EXCL_PROP_NAME, str(int(data.theiler[i, j]))
+                self._DYN_CORR_EXCL_PROP_NAME, str(int(data._theiler[i, j]))
             )
         elif self._dyn_corr_excl is not None:
             self._calc.setProperty(
@@ -281,7 +275,6 @@ class MutualInfo(JIDTBase, Undirected):
         """Compute mutual information between Y and X"""
         self._set_theiler_window(data, i, j)
         self._calc.initialise(1, 1)
-
         try:
             src, targ = data.to_numpy(squeeze=True)[[i, j]]
             self._calc.setObservations(
@@ -330,7 +323,6 @@ class TimeLaggedMutualInfo(MutualInfo):
 
 
 class TransferEntropy(JIDTBase, Directed):
-
     name = "Transfer entropy"
     identifier = "te"
     labels = ["unsigned", "embedding", "infotheory", "temporal", "directed"]
@@ -561,12 +553,16 @@ class IntegratedInformation(Undirected, Unsigned):
         self._options["normalization"] = normalization
         self.identifier += f"_{phitype}_t-{delay}_norm-{normalization}"
 
-    @parse_bivariate
-    def bivariate(self, data, i=None, j=None):
-
         if not octave.exist("phi_comp"):
             path = os.path.dirname(os.path.abspath(__file__)) + "/../lib/PhiToolbox/"
             octave.addpath(octave.genpath(path))
+
+    @parse_bivariate
+    def bivariate(self, data, i=None, j=None):
+
+        # if not octave.exist("phi_comp"):
+        #     path = os.path.dirname(os.path.abspath(__file__)) + "/../lib/PhiToolbox/"
+        #     octave.addpath(octave.genpath(path))
 
         P = [1, 2]
         Z = data.to_numpy(squeeze=True)[[i, j]]

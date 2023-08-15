@@ -1,4 +1,4 @@
-import mne.connectivity as mnec
+import mne_connectivity as mnec
 from pyspi.base import (
     Directed,
     Undirected,
@@ -31,7 +31,7 @@ class mne(Unsigned):
         self._statistic = statistic
 
         paramstr = (
-            f"_wavelet_{statistic}_fs-{fs}_fmin-{fmin:.3g}_fmax-{fmax:.3g}".replace(
+            f"-wavelet_{statistic}_fs-{fs}_fmin-{fmin:.3g}_fmax-{fmax:.3g}".replace(
                 ".", "-"
             )
         )
@@ -48,11 +48,13 @@ class mne(Unsigned):
         try:
             conn, freq = data.mne[self.measure]
         except (KeyError, AttributeError):
+            data.mne = {}
+
             z = np.moveaxis(data.to_numpy(), 2, 0)
 
             cwt_freqs = np.linspace(0.2, 0.5, 125)
             cwt_n_cycles = cwt_freqs / 7.0
-            conn, freq, _, _, _ = mnec.spectral_connectivity(
+            con = mnec.spectral_connectivity_epochs(
                 data=z,
                 method=self.measure,
                 mode="cwt_morlet",
@@ -61,14 +63,18 @@ class mne(Unsigned):
                 fmin=5 / data.n_observations,
                 fmax=self._fs / 2,
                 cwt_freqs=cwt_freqs,
-                cwt_n_cycles=cwt_n_cycles,
-                verbose="WARNING",
+                cwt_n_cycles=cwt_n_cycles
             )
+            print(con)
+            conn = con.get_data("dense")
+            freq = np.array(con.freqs)
 
-            try:
-                data.mne[self.measure] = (conn, freq)
-            except AttributeError:
-                data.mne = {self.measure: (conn, freq)}
+            # try:
+            #     data.mne[self.measure] = (conn, freq)
+            # except AttributeError:
+            #     data.mne = {self.measure: (conn, freq)}
+            # reset cache to save memory
+            data.mne = {self.measure: (conn, freq)}
 
         freq_id = np.where((freq >= self._fmin) * (freq <= self._fmax))[0]
 
@@ -136,6 +142,14 @@ class PhaseLockingValue(mne, Undirected):
         self._measure = "plv"
         super().__init__(**kwargs)
 
+class CorrectedImaginaryPhaseLockingValue(mne, Undirected):
+    name = "Corrected imaginary phase locking value (wavelet)"
+    labels = ["unsigned", "wavelet", "undirected"]
+
+    def __init__(self, **kwargs):
+        self.identifier = "ciplv"
+        self._measure = "ciplv"
+        super().__init__(**kwargs)
 
 class PairwisePhaseConsistency(mne, Undirected):
     name = "Pairwise phase consistency (wavelet)"
@@ -166,18 +180,26 @@ class DebiasedSquaredWeightedPhaseLagIndex(mne, Undirected):
         self._measure = "pli2_unbiased"
         super().__init__(**kwargs)
 
+class DirectedPhaseLagIndex(mne, Directed):
+    name = "Directed phase lag index (wavelet)"
+    labels = ["unsigned", "wavelet", "directed"]
 
-class weighted_PhaseLagIndex(mne, Undirected):
-    name = "Weighted squared phase lag index (wavelet)"
+    def __init__(self, **kwargs):
+        self.identifier = "dpli"
+        self._measure = "dpli"
+        super().__init__(**kwargs)
+
+class WeightedPhaseLagIndex(mne, Undirected):
+    name = "Weighted phase lag index (wavelet)"
     labels = ["unsigned", "wavelet", "undirected"]
 
     def __init__(self, **kwargs):
-        self.identifier = "wspli"
+        self.identifier = "wpli"
         self._measure = "wpli"
         super().__init__(**kwargs)
 
 
-class debiased_weighted_squared_PhaseLagIndex(mne, Undirected):
+class DebiasedWeightedSquaredPhaseLagIndex(mne, Undirected):
     name = "Debiased weighted squared phase lag index (wavelet)"
     labels = ["unsigned", "wavelet", "undirected"]
 
@@ -187,9 +209,9 @@ class debiased_weighted_squared_PhaseLagIndex(mne, Undirected):
         super().__init__(**kwargs)
 
 
-class PhaseSlopeIndex(mne, Undirected):
+class PhaseSlopeIndex(mne, Directed):
     name = "Phase slope index (wavelet)"
-    labels = ["unsigned", "wavelet", "undirected"]
+    labels = ["signed", "wavelet", "directed"]
 
     def __init__(self, **kwargs):
         self.identifier = "psi"
@@ -200,18 +222,23 @@ class PhaseSlopeIndex(mne, Undirected):
         try:
             psi = data.mne_psi["psi"]
             freq = data.mne_psi["freq"]
+            # Reset cache on second pass to save memory
+            data.mne_psi = None
         except AttributeError:
             z = np.moveaxis(data.to_numpy(), 2, 0)
 
             freqs = np.linspace(0.2, 0.5, 10)
-            psi, freq, _, _, _ = mnec.phase_slope_index(
+            con = mnec.phase_slope_index(
                 data=z,
                 mode="cwt_morlet",
                 sfreq=self._fs,
                 mt_adaptive=True,
-                cwt_freqs=freqs,
-                verbose="WARNING",
+                cwt_freqs=freqs
             )
+            print(con)
+            psi = con.get_data("dense")
+            freq = np.array(con.freqs)
+
             freq = freq[0]
             data.mne_psi = dict(psi=psi, freq=freq)
 
@@ -223,7 +250,7 @@ class PhaseSlopeIndex(mne, Undirected):
     @parse_multivariate
     def multivariate(self, data):
         adj_freq, freq_id = self._get_cache(data)
-        adj = self._statfn(np.real(adj_freq[..., freq_id]), axis=(2, 3))
+        adj = self._statfn(np.real(adj_freq[..., freq_id, :]), axis=(2, 3))
 
         ui = np.triu_indices(data.n_processes, 1)
         adj[ui] = adj.T[ui]

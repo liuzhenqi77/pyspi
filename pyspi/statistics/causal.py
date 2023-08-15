@@ -5,12 +5,32 @@ import pyEDM
 
 from pyspi.base import Directed, Unsigned, Signed, parse_bivariate, parse_multivariate
 
+from itertools import combinations, permutations
+from joblib import Parallel, delayed
+from tqdm import tqdm, trange
+
+import multiprocessing
+n_cores = multiprocessing.cpu_count()
 
 class AdditiveNoiseModel(Directed, Unsigned):
 
     name = "Additive noise model"
     identifier = "anm"
     labels = ["unsigned", "causal", "unordered", "linear", "directed"]
+
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_anm(pair, mat):
+            return pair[0], pair[1], ANM().anm_score(mat[pair[0], :], mat[pair[1], :])
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_anm)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+
+        return res_mat
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
@@ -24,6 +44,20 @@ class ConditionalDistributionSimilarity(Directed, Unsigned):
     identifier = "cds"
     labels = ["unsigned", "causal", "unordered", "nonlinear", "directed"]
 
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_cds(pair, mat):
+            return pair[0], pair[1], CDS().cds_score(mat[pair[0], :], mat[pair[1], :])
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_cds)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+
+        return res_mat
+
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
         z = data.to_numpy()
@@ -36,6 +70,20 @@ class RegressionErrorCausalInference(Directed, Unsigned):
     identifier = "reci"
     labels = ["unsigned", "causal", "unordered", "nonlinear", "directed"]
 
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_reci(pair, mat):
+            return pair[0], pair[1], RECI().b_fit_score(mat[pair[0], :], mat[pair[1], :])
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_reci)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+
+        return res_mat
+
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
         z = data.to_numpy()
@@ -47,6 +95,20 @@ class InformationGeometricConditionalIndependence(Directed, Unsigned):
     name = "Information-geometric conditional independence"
     identifier = "igci"
     labels = ["causal", "directed", "nonlinear", "unsigned", "unordered"]
+
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_igci(pair, mat):
+            return pair[0], pair[1], IGCI().predict_proba((mat[pair[0], :], mat[pair[1], :]))
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_igci)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+
+        return res_mat
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
@@ -88,7 +150,7 @@ class ConvergentCrossMapping(Directed, Signed):
                 embedding = np.zeros((M, 1))
 
                 # Infer optimal embedding from simplex projection
-                for _i in range(M):
+                for _i in trange(M):
                     pred = str(10) + " " + str(N - 10)
                     embed_df = pyEDM.EmbedDimension(
                         dataFrame=df,
@@ -96,6 +158,7 @@ class ConvergentCrossMapping(Directed, Signed):
                         pred=pred,
                         columns=df.columns.values[_i + 1],
                         showPlot=False,
+                        numThreads=n_cores
                     )
                     embedding[_i] = embed_df.max()["E"]
             else:
@@ -104,8 +167,8 @@ class ConvergentCrossMapping(Directed, Signed):
             # Compute CCM from the fixed or optimal embedding
             nlibs = 21
             ccmf = np.zeros((M, M, nlibs + 1))
-            for _i in range(M):
-                for _j in range(_i + 1, M):
+            for _i in trange(M):
+                for _j in trange(_i + 1, M):
                     try:
                         E = int(max(embedding[[_i, _j]]))
                     except NameError:
@@ -125,6 +188,7 @@ class ConvergentCrossMapping(Directed, Signed):
                         target=targname,
                         libSizes=lib_sizes,
                         sample=100,
+                        numThreads=n_cores
                     )
                     ccmf[_i, _j] = ccm_df.iloc[:, 1].values[: (nlibs + 1)]
                     ccmf[_j, _i] = ccm_df.iloc[:, 2].values[: (nlibs + 1)]

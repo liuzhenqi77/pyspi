@@ -131,9 +131,14 @@ class Undirected(Directed):
 
     @parse_multivariate
     def multivariate(self,data):
-        A = super(Undirected,self).multivariate(data)
+        # A = super(Undirected,self).multivariate(data)
+        A = np.zeros((data.n_processes, data.n_processes)) * np.nan
 
-        li = np.tril_indices(data.n_processes,-1)
+        for i in range(data.n_processes):
+            for j in range(i+1, data.n_processes):
+                A[i, j] = self.bivariate(data, i=i, j=j)
+
+        li = np.tril_indices(data.n_processes, -1)
         A[li] = A.T[li]
         return A
 

@@ -5,6 +5,7 @@ import copy, yaml, importlib, time, warnings, os
 from tqdm import tqdm
 from collections import Counter
 from scipy import stats
+import psutil
 
 # From this package
 from .data import Data
@@ -226,23 +227,34 @@ class Calculator:
                 "Dataset not loaded yet. Please initialise with load_dataset."
             )
 
-        pbar = tqdm(self.spis.keys())
-        for spi in pbar:
-            pbar.set_description(f"Processing [{self._name}: {spi}]")
-            start_time = time.time()
+        # pbar = tqdm(self.spis.keys())
+        # for spi in pbar:
+        start_all = time.time()
+        spi_count = len(self.spis.keys())
+        for spi_it, spi in enumerate(self.spis.keys()):
+            print(psutil.virtual_memory())
+            # pbar.set_description(f"Processing [{self._name}: {spi}]")
+            # start_time = time.time()
+            print(f"Running {self._name}: {spi_it}/{spi_count} {spi}")
             try:
+                start = time.time()
                 # Get the MPI from the dataset
                 S = self._spis[spi].multivariate(self.dataset)
 
                 # Ensure the diagonal is NaN (sometimes set within the functions)
                 np.fill_diagonal(S, np.NaN)
 
+                end = time.time()
+                print("Timer ", end - start)
+
                 # Save results
                 self._table[spi] = S
             except Exception as err:
                 warnings.warn(f'Caught {type(err)} for SPI "{spi}": {err}')
                 self._table[spi] = np.NaN
-        pbar.close()
+        end_all = time.time()
+        print("Timer for ALL SPI ", end_all - start_all)
+        # pbar.close()
 
     def _rmmin(self):
         """Iterate through all spis and remove the minimum (fixes absolute value errors when correlating)"""

@@ -77,6 +77,18 @@ class Data:
         if procnames is not None:
             assert len(procnames) == self.n_processes
 
+        self._xcorr = None
+        self._acf_mat = None
+        self._theiler = None
+
+    def _calc_acf(self):
+        T_acf = 2*self.n_observations-1
+        data_zs = zscore(self._data.squeeze(), axis=1)
+        self._acf_mat = np.zeros((self.n_processes, T_acf//2+1))
+        for i in range(self.n_processes):
+            curr_acf = np.correlate(data_zs[i, :], data_zs[i, :], mode='full')[T_acf//2:]
+            self._acf_mat[i, :] = curr_acf / curr_acf[0]
+
     @property
     def name(self):
         """Name of the data object."""

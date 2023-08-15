@@ -2,9 +2,9 @@ import warnings
 import sklearn.covariance as cov
 from scipy import stats, signal
 import numpy as np
+from numba import njit
 
 from pyspi.base import Undirected, Signed, parse_bivariate, parse_multivariate
-
 
 class Estimators(Undirected, Signed):
     """Base class for (functional) connectivity-based statistics
@@ -18,7 +18,7 @@ class Estimators(Undirected, Signed):
     def __init__(self, kind, estimator="EmpiricalCovariance", squared=False):
         paramstr = f"_{estimator}"
         if squared:
-            paramstr = "-sq" + paramstr
+            paramstr = "_sq" + paramstr
             self.labels = Estimators.labels + ["unsigned"]
             self.issigned = lambda: False
         else:
@@ -85,53 +85,86 @@ class CrossCorrelation(Undirected, Signed):
 
         if self._squared:
             self.issigned = lambda: False
-            self.identifier = self.identifier + "-sq"
+            self.identifier = self.identifier + "_sq"
             self.labels = CrossCorrelation.labels + ["unsigned"]
         else:
             self.labels = CrossCorrelation.labels + ["signed"]
         self.identifier += f"_{statistic}_sig-{sigonly}"
 
-    @parse_bivariate
-    def bivariate(self, data, i=None, j=None):
+    # @parse_bivariate
+    # def bivariate(self, data, i=None, j=None):
 
+    #     T = data.n_observations
+    #     try:
+    #         r_ij = data.xcorr[(i, j)]
+    #     except (KeyError, AttributeError):
+    #         x, y = data.to_numpy()[[i, j]]
+
+    #         r_ij = np.squeeze(signal.correlate(x, y, "full"))
+    #         r_ij = r_ij / x.std() / y.std() / (T - 1)
+
+    #         # Truncate to T/4
+    #         r_ij = r_ij[T - T // 4 : T + T // 4]
+
+    #         try:
+    #             data.xcorr[(i, j)] = r_ij
+    #         except AttributeError:
+    #             data.xcorr = {(i, j): r_ij}
+    #         data.xcorr[(j, i)] = data.xcorr[(i, j)]
+
+    #     # Truncate at first statistically significant zero (i.e., |r| <= 1.96/sqrt(T))
+    #     if self._sigonly:
+    #         N = len(r_ij) // 2
+    #         fzf = np.where(np.abs(r_ij[len(r_ij) // 2 :]) <= 1.96 / np.sqrt(N))[0][0]
+    #         fzr = np.where(np.abs(r_ij[: len(r_ij) // 2]) <= 1.96 / np.sqrt(N))[0][-1]
+    #         r_ij = r_ij[N - fzr : N + fzf]
+
+    #     if self._statistic == "max":
+    #         if self._squared:
+    #             return np.max(r_ij**2)
+    #         else:
+    #             return np.max(r_ij)
+    #     elif self._statistic == "mean":
+    #         if self._squared:
+    #             return np.mean(r_ij**2)
+    #         else:
+    #             return np.mean(r_ij)
+    #     else:
+    #         raise TypeError(f"Unknown statistic: {self._statistic}")
+
+    @parse_multivariate
+    def multivariate(self, data):
         T = data.n_observations
-        try:
-            r_ij = data.xcorr[(i, j)]
-        except (KeyError, AttributeError):
-            x, y = data.to_numpy()[[i, j]]
+        if data._xcorr is None:
+            a = data._data.squeeze()
+            r_mat = np.zeros((data.n_processes, data.n_processes, 2*T-1))
 
-            r_ij = np.squeeze(signal.correlate(x, y, "full"))
-            r_ij = r_ij / x.std() / y.std() / (T - 1)
+            for i in range(data.n_processes):
+                corr_tmp = signal.correlate(a[i:, :], a[i, :][None, :], mode="full")
+                r_mat[i:, i, :] = corr_tmp
+                r_mat[i, i+1:, :] = corr_tmp[1:, ::-1]
+            
+            a_std = np.std(a, axis=1)
+            r_mat = r_mat / np.outer(a_std, a_std)[:, :, None] / (T-1)
 
             # Truncate to T/4
-            r_ij = r_ij[T - T // 4 : T + T // 4]
+            # r_mat = r_mat[:, :, T - T // 4 : T + T // 4]
 
-            try:
-                data.xcorr[(i, j)] = r_ij
-            except AttributeError:
-                data.xcorr = {(i, j): r_ij}
-            data.xcorr[(j, i)] = data.xcorr[(i, j)]
+            data._xcorr = r_mat.copy()
 
-        # Truncate at first statistically significant zero (i.e., |r| <= 1.96/sqrt(T))
-        if self._sigonly:
-            N = len(r_ij) // 2
-            fzf = np.where(np.abs(r_ij[len(r_ij) // 2 :]) <= 1.96 / np.sqrt(N))[0][0]
-            fzr = np.where(np.abs(r_ij[: len(r_ij) // 2]) <= 1.96 / np.sqrt(N))[0][-1]
-            r_ij = r_ij[N - fzr : N + fzf]
-
+        r_mat = data._xcorr
         if self._statistic == "max":
             if self._squared:
-                return np.max(r_ij**2)
+                return np.max(r_mat**2, axis=2)
             else:
-                return np.max(r_ij)
+                return np.max(r_mat, axis=2)
         elif self._statistic == "mean":
             if self._squared:
-                return np.mean(r_ij**2)
+                return np.mean(r_mat**2, axis=2)
             else:
-                return np.mean(r_ij)
+                return np.mean(r_mat, axis=2)
         else:
             raise TypeError(f"Unknown statistic: {self._statistic}")
-
 
 class SpearmanR(Undirected, Signed):
 
@@ -143,19 +176,26 @@ class SpearmanR(Undirected, Signed):
         self._squared = squared
         if squared:
             self.issigned = lambda: False
-            self.identifier = self.identifier + "-sq"
+            self.identifier = self.identifier + "_sq"
             self.labels += ["unsigned"]
         else:
             self.labels += ["signed"]
 
-    @parse_bivariate
-    def bivariate(self, data, i=None, j=None):
-        x, y = data.to_numpy()[[i, j]]
-        if self._squared:
-            return stats.spearmanr(x, y).correlation ** 2
-        else:
-            return stats.spearmanr(x, y).correlation
+    # @parse_bivariate
+    # def bivariate(self, data, i=None, j=None):
+    #     x, y = data._data.squeeze()[[i, j]]
+    #     if self._squared:
+    #         return stats.spearmanr(x, y).correlation ** 2
+    #     else:
+    #         return stats.spearmanr(x, y).correlation
 
+    @parse_multivariate
+    def multivariate(self, data):
+        a = data._data.squeeze()
+        if self._squared:
+            return stats.spearmanr(a, axis=1).correlation ** 2
+        else:
+            return stats.spearmanr(a, axis=1).correlation
 
 class KendallTau(Undirected, Signed):
 
@@ -167,7 +207,7 @@ class KendallTau(Undirected, Signed):
         self._squared = squared
         if squared:
             self.issigned = lambda: False
-            self.identifier = self.identifier + "-sq"
+            self.identifier = self.identifier + "_sq"
             self.labels += ["unsigned"]
         else:
             self.labels += ["signed"]

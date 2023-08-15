@@ -24,6 +24,9 @@ from pyspi.base import (
     parse_multivariate,
 )
 
+from itertools import combinations, permutations
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 class PairwiseDistance(Undirected, Unsigned):
 
@@ -56,6 +59,21 @@ class HilbertSchmidtIndependenceCriterion(Undirected, Unsigned):
         if biased:
             self.identifier += "_biased"
 
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_hsic(pair, mat):
+            return pair[0], pair[1], Hsic(bias=self._biased).statistic(mat[pair[0], :].reshape(-1, 1), mat[pair[1], :].reshape(-1, 1))
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_hsic)(pair, data.to_numpy()) for pair in tqdm(combinations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+        res_mat += res_mat.T
+
+        return res_mat
+
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
         x, y = data.to_numpy()[[i, j]]
@@ -70,6 +88,20 @@ class HellerHellerGorfine(Directed, Unsigned):
     identifier = "hhg"
     labels = ["unsigned", "distance", "unordered", "nonlinear", "directed"]
 
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_hhg(pair, mat):
+            return pair[0], pair[1], HHG().statistic(mat[pair[0], :], mat[pair[1], :])
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_hhg)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+
+        return res_mat
+    
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
         x, y = data.to_numpy()[[i, j]]
@@ -89,6 +121,21 @@ class DistanceCorrelation(Undirected, Unsigned):
         if biased:
             self.identifier += "_biased"
 
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_dcorr(pair, mat):
+            return pair[0], pair[1], Dcorr(bias=self._biased).statistic(mat[pair[0], :], mat[pair[1], :])
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_dcorr)(pair, data.to_numpy()) for pair in tqdm(combinations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+        res_mat += res_mat.T
+
+        return res_mat
+
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
         """ """
@@ -103,6 +150,21 @@ class MultiscaleGraphCorrelation(Undirected, Unsigned):
     name = "Multiscale graph correlation"
     identifier = "mgc"
     labels = ["distance", "unsigned", "unordered", "nonlinear", "undirected"]
+
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_mgc(pair, mat):
+            return pair[0], pair[1], MGC().statistic(mat[pair[0], :], mat[pair[1], :])
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_mgc)(pair, data.to_numpy()) for pair in tqdm(combinations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+        res_mat += res_mat.T
+
+        return res_mat
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
@@ -121,6 +183,20 @@ class CrossDistanceCorrelation(Directed, Unsigned):
     def __init__(self, max_lag=1):
         self._max_lag = max_lag
         self.identifier += f"_maxlag-{max_lag}"
+
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_dcorrx(pair, mat):
+            return pair[0], pair[1], DcorrX(max_lag=self._max_lag).statistic(mat[pair[0], :], mat[pair[1], :])[0]
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_dcorrx)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+
+        return res_mat
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
@@ -141,6 +217,20 @@ class CrossMultiscaleGraphCorrelation(Directed, Unsigned):
     def __init__(self, max_lag=1):
         self._max_lag = max_lag
         self.identifier += f"_maxlag-{max_lag}"
+
+    @parse_multivariate
+    def multivariate(self, data):
+
+        def _get_mgcx(pair, mat):
+            return pair[0], pair[1], MGCX(max_lag=self._max_lag).statistic(mat[pair[0], :], mat[pair[1], :])[0]
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_mgcx)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+
+        return res_mat
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
@@ -170,6 +260,20 @@ class TimeWarping(Undirected, Unsigned):
             raise NotImplementedError(
                 f"Add the similarity function for {self.identifier}"
             )
+
+    @parse_multivariate
+    def multivariate(self, data):
+        def _get_dtw(pair, mat):
+            return pair[0], pair[1], self._simfn(mat[pair[0], :], mat[pair[1], :], global_constraint=self._global_constraint)
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_dtw)(pair, data.to_numpy(squeeze=True)) for pair in tqdm(combinations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+        res_mat += res_mat.T
+
+        return res_mat
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
@@ -202,6 +306,20 @@ class SoftDynamicTimeWarping(TimeWarping):
     name = "Dynamic time warping"
     identifier = "softdtw"
 
+    @parse_multivariate
+    def multivariate(self, data):
+        def _get_softdtw(pair, mat):
+            return pair[0], pair[1], tslearn.metrics.soft_dtw(mat[pair[0], :], mat[pair[1], :])
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_softdtw)(pair, data.to_numpy(squeeze=True)) for pair in tqdm(combinations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+        res_mat += res_mat.T
+
+        return res_mat
+
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
         z = data.to_numpy(squeeze=True)
@@ -231,7 +349,7 @@ class Barycenter(Directed, Signed):
         self._preproc = lambda x: x
         if squared:
             self._preproc = lambda x: x**2
-            self.identifier += f"-sq"
+            self.identifier += f"_sq"
 
         if statistic == "mean":
             self._statfn = lambda x: np.nanmean(self._preproc(x))
@@ -241,6 +359,28 @@ class Barycenter(Directed, Signed):
             raise NameError(f"Unknown statistic: {statistic}")
 
         self.identifier += f"_{mode}_{statistic}"
+
+    @parse_multivariate
+    def multivariate(self, data):
+        def _get_barycenter(pair, mat):
+            return pair[0], pair[1], self._fn(mat[[pair[0], pair[1]]])
+        
+        try:
+            pres = data.barycenter[self._mode]
+        except (AttributeError, KeyError):
+            pres = Parallel(n_jobs=-1)(delayed(_get_barycenter)(pair, data.to_numpy(squeeze=True)) for pair in tqdm(combinations(range(data.n_processes), 2)))
+            try:
+                data.barycenter[self._mode] = pres
+            except AttributeError: # first run, nothing in data.barycenter
+                data.barycenter = {self._mode: pres}
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = self._statfn(p[2])
+        res_mat += res_mat.T
+
+        return res_mat
+
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):

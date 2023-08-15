@@ -6,7 +6,7 @@ from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from sklearn.gaussian_process import kernels, GaussianProcessRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn import linear_model
-import mne.connectivity as mnec
+import mne_connectivity as mnec
 
 from pyspi.base import (
     Directed,
@@ -16,6 +16,9 @@ from pyspi.base import (
     parse_multivariate,
 )
 
+from itertools import combinations, permutations
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 class Cointegration(Undirected, Unsigned):
 
@@ -110,6 +113,25 @@ class LinearModel(Directed, Unsigned):
         self.identifier += f"_{model}"
         self._model = getattr(linear_model, model)
 
+    @parse_multivariate
+    def multivariate(self, data):
+        def _get_lmfit(pair, mat):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                mdl = self._model().fit(mat[pair[0]], np.ravel(mat[pair[1]]))
+            y_predict = mdl.predict(mat[pair[0]])
+            return pair[0], pair[1], mean_squared_error(y_predict, np.ravel(mat[pair[1]]))
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_lmfit)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+        res_mat += res_mat.T
+
+        return res_mat
+
+
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
         z = data.to_numpy()
@@ -129,6 +151,24 @@ class GPModel(Directed, Unsigned):
         self.identifier += f"_{kernel}"
         self._kernel = kernels.ConstantKernel() + kernels.WhiteKernel()
         self._kernel += getattr(kernels, kernel)()
+
+    @parse_multivariate
+    def multivariate(self, data):
+        def _get_gpfit(pair, mat):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                gp = GaussianProcessRegressor(kernel=self._kernel).fit(mat[pair[0]], np.ravel(mat[pair[1]]))
+            y_predict = gp.predict(mat[pair[0]])
+            return pair[0], pair[1], mean_squared_error(y_predict, np.ravel(mat[pair[1]]))
+        
+        pres = Parallel(n_jobs=-1)(delayed(_get_gpfit)(pair, data.to_numpy()) for pair in tqdm(permutations(range(data.n_processes), 2)))
+
+        res_mat = np.zeros((data.n_processes, data.n_processes))
+        for p in pres:
+            res_mat[p[0], p[1]] = p[2]
+        res_mat += res_mat.T
+
+        return res_mat
 
     @parse_bivariate
     def bivariate(self, data, i=None, j=None):
@@ -161,10 +201,10 @@ class PowerEnvelopeCorrelation(Undirected, Unsigned):
     @parse_multivariate
     def multivariate(self, data):
         z = np.moveaxis(data.to_numpy(), 2, 0)
-        adj = np.squeeze(
-            mnec.envelope_correlation(
-                z, orthogonalize=self._orth, log=self._log, absolute=self._absolute
+        con = mnec.envelope_correlation(
+            z, orthogonalize=self._orth, log=self._log, absolute=self._absolute
             )
-        )
+        print(con)
+        adj = np.squeeze(con.get_data("dense"))
         np.fill_diagonal(adj, np.nan)
         return adj
