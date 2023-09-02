@@ -226,11 +226,14 @@ class Calculator:
                 "Dataset not loaded yet. Please initialise with load_dataset."
             )
 
-        pbar = tqdm(self.spis.keys())
-        for spi in pbar:
-            pbar.set_description(f"Processing [{self._name}: {spi}]")
-            start_time = time.time()
+        # pbar = tqdm(self.spis.keys())
+        start_all = time.time()
+        spi_count = len(self.spis.keys())
+        for spi_it, spi in enumerate(self.spis.keys()):
+            # pbar.set_description(f"Processing [{self._name}: {spi}]")
+            print(f"Running {self._name}: {spi_it}/{spi_count} {spi}")
             try:
+                start_time = time.time()
                 # Get the MPI from the dataset
                 S = self._spis[spi].multivariate(self.dataset)
 
@@ -239,10 +242,15 @@ class Calculator:
 
                 # Save results
                 self._table[spi] = S
+
+                end_time = time.time()
+                print("Calculation time: ", end_time - start_time)
             except Exception as err:
                 warnings.warn(f'Caught {type(err)} for SPI "{spi}": {err}')
                 self._table[spi] = np.NaN
-        pbar.close()
+        # pbar.close()
+        end_all = time.time()
+        print("Calculation time (all): ", end_all - start_all)
 
     def _rmmin(self):
         """Iterate through all spis and remove the minimum (fixes absolute value errors when correlating)"""
